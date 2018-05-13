@@ -15,15 +15,13 @@ N_CLASS = 10
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'  #gpu
 
-#input data path!
-path_svhn_train = '/home/xfuwu/work/tf-domain-wu/adda/data/svhn/train_32x32.mat'
-path_svhn_test = '/home/xfuwu/work/tf-domain-wu/adda/data/svhn/test_32x32.mat'
-path_mnist_train = '/home/xfuwu/work/tf-domain-wu/adda/data/mnist/train_mnist_32x32.npy'
-path_mnist_test = '/home/xfuwu/work/tf-domain-wu/adda/data/mnist/test_mnist_32x32.npy'
+#insert your path to dataset
+path_svhn_train = 'Yourpath/data/svhn/train_32x32.mat'
+path_svhn_test = 'Yourpath/data/svhn/test_32x32.mat'
+path_mnist_train = 'Yourpath/data/mnist/train_mnist_32x32.npy'
+path_mnist_test = 'Yourpath/data/mnist/test_mnist_32x32.npy'
 print('data loading...')
 ############################################################################################################
-#---- The original order of returned datasets are not compatiable with the definition of function
-#---- Corrected by xfuwu on Mar.26, 2018
 data_s_im, data_s_label, data_s_im_test, data_s_label_test = return_mnist(path_mnist_train, path_mnist_test)
 data_t_im, data_t_label, data_t_im_test, data_t_label_test = return_svhn(path_svhn_train, path_svhn_test)
 print('load finished')
@@ -161,9 +159,6 @@ def train_and_evaluate(graph, model, verbose=True):
             if t == 0:
                 gen_source_only_batch = batch_generator(
                     [data_s_im, data_s_label], batch_size)  #shuffle is employed for dataset with default
-                ##--- initilization of labelled training set and then progressively expanded it
-                #source_train = data_s_im
-                #source_label = data_s_label
             else:
                 ####-------source_train  always starts with data_s, which is not satisfied for unsup.---
                 source_train = data_s_im
