@@ -1,7 +1,9 @@
-##########################################################################
+########################################################################################
 #   Unsupervised Domain Adaptation for SVHN-->MNIST
-#   1. drop out is not used at phase-0 but used in the subsequent phases
-##########################################################################
+#   1. Batch-normalization is only employed at the Conv-3 layer in the shared network F
+#   2. Drop-out is disabled in the 0-th phase, but used in the subsequent phases
+#   3. Batch size for training Ft, F is set as 128, for training Fs, F is set as 64
+########################################################################################
 import tensorflow as tf
 import os
 import numpy as np
@@ -12,7 +14,7 @@ flags.DEFINE_float('learning_rate', 0.025, "value of learnin rage")
 FLAGS = flags.FLAGS
 N_CLASS = 10
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'  #gpu
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'  #gpu
 
 #insert your path to dataset
 path_svhn_train = 'Yourpath/data/svhn/train_32x32.mat'
@@ -39,9 +41,7 @@ class Model(object):
         self.y = tf.placeholder(tf.float32, [None, N_CLASS])
         self.train = tf.placeholder(tf.bool, [])
         self.keep_prob = tf.placeholder(tf.float32)
-        all_labels = lambda: self.y
-        source_labels = lambda: tf.slice(self.y, [0, 0], [batch_size // 2, -1])
-        self.classify_labels = tf.cond(self.train, source_labels, all_labels)
+        self.classify_labels = self.y
 
         X_input = (tf.cast(self.X, tf.float32) - pixel_mean) / 255.
         # CNN model for feature extraction
@@ -75,16 +75,13 @@ class Model(object):
             W_fc0 = weight_variable([3072, 2048], stddev=0.01, name='W_fc0')
             b_fc0 = bias_variable([2048], init=0.01, name='b_fc0')
             h_fc0 = tf.nn.relu(batch_norm_fc(tf.matmul(self.feature, W_fc0) + b_fc0, 2048))
-            ##----drop-out is disabled for mnist-->svhn
             h_fc0 = tf.nn.dropout(h_fc0, self.keep_prob)
 
             W_fc1 = weight_variable([2048, N_CLASS], stddev=0.01, name='W_fc1')
             b_fc1 = bias_variable([N_CLASS], init=0.01, name='b_fc1')
             logits = tf.matmul(h_fc0, W_fc1) + b_fc1
 
-            all_logits = lambda: logits
-            source_logits = lambda: tf.slice(logits, [0, 0], [batch_size // 2, -1])
-            classify_logits = tf.cond(self.train, source_logits, all_logits)
+            classify_logits = logits
             self.pred_s = tf.nn.softmax(classify_logits)
             self.pred_loss_s = tf.nn.softmax_cross_entropy_with_logits(logits=classify_logits,
                                                                        labels=self.classify_labels)
@@ -99,9 +96,7 @@ class Model(object):
             b_fc1_t = bias_variable([10], init=0.01, name='b_fc1_t')
             logits_t = tf.matmul(h_fc0_t, W_fc1_t) + b_fc1_t
 
-            all_logits = lambda: logits_t
-            source_logits = lambda: tf.slice(logits_t, [0, 0], [batch_size // 2, -1])
-            classify_logits = tf.cond(self.train, source_logits, all_logits)
+            classify_logits = logits_t
 
             self.pred_t = tf.nn.softmax(classify_logits)
             self.pred_loss_t = tf.nn.softmax_cross_entropy_with_logits(logits=classify_logits,
@@ -151,7 +146,7 @@ def train_and_evaluate(graph, model, verbose=True):
             label_target = np.zeros((data_t_im.shape[0], N_CLASS))
             if t == 0:
                 gen_source_only_batch = batch_generator(
-                    [data_s_im, data_s_label], batch_size)  #shuffle is employed for dataset with default
+                    [data_s_im, data_s_label], batch_size//2)  #shuffle is employed for dataset with default
             else:
                 ####-------source_train  always starts with data_s, which is not satisfied for unsup.---
                 source_train = data_s_im
@@ -161,11 +156,9 @@ def train_and_evaluate(graph, model, verbose=True):
                 source_label = np.r_[source_label, new_label]
 
                 gen_source_batch = batch_generator(
-                    [source_train, source_label], batch_size)
+                    [source_train, source_label], batch_size//2)
                 gen_new_batch = batch_generator(
                     [new_data, new_label], batch_size)
-                gen_source_only_batch = batch_generator(
-                    [data_s_im, data_s_label], batch_size)
 
             # Training loop
             for i in range(num_steps):
@@ -246,12 +239,13 @@ def train_and_evaluate(graph, model, verbose=True):
             if t != 0:
                 cand = data_t_im[perm, :]
                 canl = data_t_label[perm, :]
-                rate = min(max(int((t + 1) / 20.0 * preds_stack.shape[0]), 5000), 60000)
-
-                new_data, new_label, new_ind = judge_idda_func(cand,
+                rate = max(int((t + 1) / 1.0 * preds_stack.shape[0]), 60000)
+                new_data, new_label, new_ind = judge_init_func(cand,
                                                              preds_stack[:rate, :],
-                                                             lower=lowerValue,
+                                                             lower = 0.01,     #0.06
+                                                             num_sel = 1024,
                                                              num_class=N_CLASS)
+                
                 correct_new_labels = tf.equal(tf.argmax(new_label, 1), tf.argmax(canl[new_ind, :], 1))
                 label_correct_ones = tf.reduce_sum(tf.cast(correct_new_labels, tf.int32))
                 label_errors = new_data.shape[0] - label_correct_ones
@@ -321,8 +315,8 @@ for i in range(num_experiments):
 
 print('Avg Source accuracy: %f'% (all_source / num_experiments))
 
-print('Per Target accuracy (Target Classifier):', acc_t_snet)
-print('Per Target accuracy (Source Classifier):', acc_t_tnet)
+print('Per Target accuracy (Target Classifier):', acc_t_tnet)
+print('Per Target accuracy (Source Classifier):', acc_t_snet)
 
 print('Avg Target accuracy-tnet: %f'% (all_target / num_experiments))
 print('Avg Target accuracy-snet: %f'% (all_t_snet / num_experiments))
