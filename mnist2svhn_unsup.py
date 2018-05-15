@@ -1,8 +1,9 @@
-###########################################################################
+#########################################################################################
 #   Unsupervised Domain Adaptation for MNIST-->SVHN
-#   1. batch-normalization is employed at the final layer of F-net
-#   2. drop-out is disabled
-##########################################################################
+#   1. Batch-normalization is only employed at the Conv-3 layer in the shared network F
+#   2. Drop-out is disabled in the 0-th phase, but used in the subsequent phases
+#   3. Batch size for training Ft, F is set as 128, for training Fs, F is set as 64
+#########################################################################################
 import tensorflow as tf
 import os
 import numpy as np
@@ -40,9 +41,7 @@ class Model(object):
         self.y = tf.placeholder(tf.float32, [None, N_CLASS])
         self.train = tf.placeholder(tf.bool, [])
         self.keep_prob = tf.placeholder(tf.float32)
-        all_labels = lambda: self.y
-        source_labels = lambda: tf.slice(self.y, [0, 0], [batch_size // 2, -1])
-        self.classify_labels = tf.cond(self.train, source_labels, all_labels)
+        self.classify_labels = self.y
 
         X_input = (tf.cast(self.X, tf.float32) - pixel_mean) / 255.
         # CNN model for feature extraction
@@ -62,34 +61,26 @@ class Model(object):
             h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
             h_conv2 = batch_norm_conv(h_conv2, 128)
 
-            ##----drop-out is disabled for mnist-->svhn---modified by xfuwu on Apr.17, 2018
             h_fc1_drop = tf.nn.dropout(h_conv2, self.keep_prob)
             h_fc1_drop = tf.reshape(h_fc1_drop, [-1, 8192])
 
             W_fc_0 = weight_variable([8192, 3072], stddev=0.01, name='W_fc0')
             b_fc_0 = bias_variable([3072], init=0.01, name='b_fc0')
             h_fc_0 = tf.nn.relu(tf.matmul(h_fc1_drop, W_fc_0) + b_fc_0)
-            ##-----insert batch-norm in the last Fc layer for shared network F when mnist->svhn is considered
-            h_fc_0 = batch_norm_fc(h_fc_0, 3072)
 
-            ##----drop-out is disabled for mnist-->svhn---modified by xfuwu on Apr.17, 2018
             self.feature = tf.nn.dropout(h_fc_0, self.keep_prob)
-            #self.feature = h_fc_0
 
         with tf.variable_scope('label_predictor_source'):
             W_fc0 = weight_variable([3072, 2048], stddev=0.01, name='W_fc0')
             b_fc0 = bias_variable([2048], init=0.01, name='b_fc0')
             h_fc0 = tf.nn.relu(batch_norm_fc(tf.matmul(self.feature, W_fc0) + b_fc0, 2048))
-            ##----drop-out is disabled for mnist-->svhn
             h_fc0 = tf.nn.dropout(h_fc0, self.keep_prob)
 
             W_fc1 = weight_variable([2048, N_CLASS], stddev=0.01, name='W_fc1')
             b_fc1 = bias_variable([N_CLASS], init=0.01, name='b_fc1')
             logits = tf.matmul(h_fc0, W_fc1) + b_fc1
 
-            all_logits = lambda: logits
-            source_logits = lambda: tf.slice(logits, [0, 0], [batch_size // 2, -1])
-            classify_logits = tf.cond(self.train, source_logits, all_logits)
+            classify_logits = logits
             self.pred_s = tf.nn.softmax(classify_logits)
             self.pred_loss_s = tf.nn.softmax_cross_entropy_with_logits(logits=classify_logits,
                                                                        labels=self.classify_labels)
@@ -98,16 +89,13 @@ class Model(object):
             W_fc0_t = weight_variable([3072, 2048], stddev=0.01, name='W_fc0_t')
             b_fc0_t = bias_variable([2048], init=0.01, name='b_fc0_t')
             h_fc0_t = tf.nn.relu(tf.matmul(self.feature, W_fc0_t) + b_fc0_t)
-            ##----drop-out is disabled for mnist-->svhn
             h_fc0_t = tf.nn.dropout(h_fc0_t, self.keep_prob)
 
             W_fc1_t = weight_variable([2048, 10], stddev=0.01, name='W_fc1_t')
             b_fc1_t = bias_variable([10], init=0.01, name='b_fc1_t')
             logits_t = tf.matmul(h_fc0_t, W_fc1_t) + b_fc1_t
 
-            all_logits = lambda: logits_t
-            source_logits = lambda: tf.slice(logits_t, [0, 0], [batch_size // 2, -1])
-            classify_logits = tf.cond(self.train, source_logits, all_logits)
+            classify_logits = logits_t
 
             self.pred_t = tf.nn.softmax(classify_logits)
             self.pred_loss_t = tf.nn.softmax_cross_entropy_with_logits(logits=classify_logits,
@@ -158,7 +146,7 @@ def train_and_evaluate(graph, model, verbose=True):
             label_target = np.zeros((data_t_im.shape[0], N_CLASS))
             if t == 0:
                 gen_source_only_batch = batch_generator(
-                    [data_s_im, data_s_label], batch_size)  #shuffle is employed for dataset with default
+                    [data_s_im, data_s_label], batch_size//2)  #shuffle is employed for dataset with default
             else:
                 ####-------source_train  always starts with data_s, which is not satisfied for unsup.---
                 source_train = data_s_im
@@ -168,11 +156,9 @@ def train_and_evaluate(graph, model, verbose=True):
                 source_label = np.r_[source_label, new_label]
 
                 gen_source_batch = batch_generator(
-                    [source_train, source_label], batch_size)
+                    [source_train, source_label], batch_size//2)
                 gen_new_batch = batch_generator(
                     [new_data, new_label], batch_size)
-                gen_source_only_batch = batch_generator(
-                    [data_s_im, data_s_label], batch_size)
 
             # Training loop
             for i in range(num_steps[t]):
@@ -196,13 +182,13 @@ def train_and_evaluate(graph, model, verbose=True):
                         sess.run([source_train_op, total_loss, pred_loss_source,
                                   label_acc_s],
                                  feed_dict={model.X: X0, model.y: y0, model.train: False, learning_rate: lr,
-                                            model.keep_prob: 1})
+                                            model.keep_prob: dropout})
 
                     X1, y1 = next(gen_new_batch) #new_data only (target)
                     _, p_acc_t = \
                         sess.run([target_train_op, label_acc_t],
                                  feed_dict={model.X: X1, model.y: y1, model.train: False, learning_rate: lr,
-                                            model.keep_prob: 1})
+                                            model.keep_prob: dropout})
 
                     if verbose and i % 5000 == 0:
                         print('loss: %f  loss_s: %f  acc_s: %f acc_t: %f' % \
