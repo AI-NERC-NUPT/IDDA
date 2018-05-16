@@ -33,8 +33,8 @@ print('load finished')
 pixel_mean = np.vstack([data_t_im, data_s_im]).mean((0, 1, 2))
 num_test = 500
 
+batch_size = 128
 num_labelled = 60  #60, 80, 100
-batch_size = num_labelled
 P = 15  #15 for numlabelled=60, 20 for 80/100
 
 class Model(object):
