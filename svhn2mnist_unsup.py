@@ -226,10 +226,11 @@ def train_and_evaluate(graph, model, verbose=True):
             if t == 0:
                 cand = data_t_im[perm, :]
                 canl = data_t_label[perm,:]
-                rate = max(int((t + 1) / 20.0 * preds_stack.shape[0]), 2000)  # k/20 * n?: number of newly-labeled target samples
-                new_data, new_label, new_ind = judge_idda_func(cand,
+                rate = max(int((t + 1) / 1.0 * preds_stack.shape[0]), 60000)
+                new_data, new_label, new_ind = judge_init_func(cand,
                                                              preds_stack[:rate, :],
-                                                             lower = 0.09,
+                                                             lower = 0.01,     #0.06
+                                                             num_sel = 1024,
                                                              num_class=N_CLASS)
                 correct_new_labels = tf.equal(tf.argmax(new_label, 1), tf.argmax(canl[new_ind,:],1))
                 label_correct_ones = tf.reduce_sum(tf.cast(correct_new_labels, tf.int32))
@@ -239,13 +240,11 @@ def train_and_evaluate(graph, model, verbose=True):
             if t != 0:
                 cand = data_t_im[perm, :]
                 canl = data_t_label[perm, :]
-                rate = max(int((t + 1) / 1.0 * preds_stack.shape[0]), 60000)
-                new_data, new_label, new_ind = judge_init_func(cand,
+                rate = min(max(int((t + 1) / 30.0 * preds_stack.shape[0]), 2000), 60000)
+                new_data, new_label, new_ind = judge_idda_func(cand,
                                                              preds_stack[:rate, :],
-                                                             lower = 0.01,     #0.06
-                                                             num_sel = 1024,
-                                                             num_class=N_CLASS)
-                
+                                                             lower=lowerValue,
+                                                             num_class=N_CLASS)              
                 correct_new_labels = tf.equal(tf.argmax(new_label, 1), tf.argmax(canl[new_ind, :], 1))
                 label_correct_ones = tf.reduce_sum(tf.cast(correct_new_labels, tf.int32))
                 label_errors = new_data.shape[0] - label_correct_ones
@@ -289,7 +288,7 @@ def train_and_evaluate(graph, model, verbose=True):
             # print('new_label_errors: %d'% (label_errors))
             print('Eval source-net-loss with target domain', aver_net_s_loss / num_iter)
             print('Eval source-net-correct-loss with target domain', aver_net_s_correct_loss / num_iter)
-            print('lower threshold', lowerValue)  # 0.08 * pow(1.2, -t) + 0.04
+            print('lower threshold', lowerValue) 
 
             print('train target', total_target / size_t, total_acc_s / size_t, total_source / size_s)
     return total_source / size_s, total_target / size_t, total_acc_s / size_t
