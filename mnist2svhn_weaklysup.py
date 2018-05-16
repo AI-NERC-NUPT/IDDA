@@ -1,8 +1,9 @@
-###########################################################################
+#########################################################################################
 #   Weakly-Supervised Domain Adaptation from MNIST-->SVHN
-#   1. batch-normalization is employed at the final layer of F-net
-#   2. no drop-out at phase-0 but used in the subsequent phases
-##########################################################################
+#   1. Batch-normalization is only employed at the Conv-3 layer in the shared network F
+#   2. Drop-out is disabled in the 0-th phase, but used in the subsequent phases
+#   3. Batch size for training Ft, F is set as 128, for training Fs, F is set as 64
+#########################################################################################
 import tensorflow as tf
 import os
 import numpy as np
@@ -16,7 +17,7 @@ flags.DEFINE_float('learning_rate', 0.025, "value of learning rate")
 FLAGS = flags.FLAGS
 N_CLASS = 10
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'  #gpu
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'  #gpu
 
 #insert your path to dataset
 path_svhn_train = 'Yourpath/data/svhn/train_32x32.mat'
@@ -34,6 +35,7 @@ num_test = 500
 
 num_labelled = 60  #60, 80, 100
 batch_size = num_labelled
+P = 15  #15 for numlabelled=60, 20 for 80/100
 
 class Model(object):
 
@@ -45,9 +47,7 @@ class Model(object):
         self.y = tf.placeholder(tf.float32, [None, N_CLASS])
         self.train = tf.placeholder(tf.bool, [])
         self.keep_prob = tf.placeholder(tf.float32)
-        all_labels = lambda: self.y
-        source_labels = lambda: tf.slice(self.y, [0, 0], [batch_size // 2, -1])
-        self.classify_labels = tf.cond(self.train, source_labels, all_labels)
+        self.classify_labels = self.y
 
         X_input = (tf.cast(self.X, tf.float32) - pixel_mean) / 255.
         # CNN model for feature extraction
@@ -73,8 +73,7 @@ class Model(object):
             W_fc_0 = weight_variable([8192, 3072], stddev=0.01, name='W_fc0')
             b_fc_0 = bias_variable([3072], init=0.01, name='b_fc0')
             h_fc_0 = tf.nn.relu(tf.matmul(h_fc1_drop, W_fc_0) + b_fc_0)
-            ## added on Apr.24, 2018
-            h_fc_0 = batch_norm_fc(h_fc_0, 3072)
+
             self.feature = tf.nn.dropout(h_fc_0, self.keep_prob)
 
         with tf.variable_scope('label_predictor_source'):
@@ -87,9 +86,7 @@ class Model(object):
             b_fc1 = bias_variable([N_CLASS], init=0.01, name='b_fc1')
             logits = tf.matmul(h_fc0, W_fc1) + b_fc1
 
-            all_logits = lambda: logits
-            source_logits = lambda: tf.slice(logits, [0, 0], [batch_size // 2, -1])
-            classify_logits = tf.cond(self.train, source_logits, all_logits)
+            classify_logits = logits
             self.pred_s = tf.nn.softmax(classify_logits)
             self.pred_loss_s = tf.nn.softmax_cross_entropy_with_logits(logits=classify_logits,
                                                                        labels=self.classify_labels)
@@ -103,9 +100,7 @@ class Model(object):
             b_fc1_t = bias_variable([10], init=0.01, name='b_fc1_t')
             logits_t = tf.matmul(h_fc0_t, W_fc1_t) + b_fc1_t
 
-            all_logits = lambda: logits_t
-            source_logits = lambda: tf.slice(logits_t, [0, 0], [batch_size // 2, -1])
-            classify_logits = tf.cond(self.train, source_logits, all_logits)
+            classify_logits = logits_t
 
             self.pred_t = tf.nn.softmax(classify_logits)
             self.pred_loss_t = tf.nn.softmax_cross_entropy_with_logits(logits=classify_logits,
@@ -154,7 +149,7 @@ def train_and_evaluate(graph, model, verbose=True):
             label_target = np.zeros((data_t_im.shape[0], N_CLASS))
             if t == 0:
                 gen_source_only_batch = batch_generator(
-                    [data_s_im, data_s_label], batch_size)  #shuffle is employed for dataset with default
+                    [data_s_im, data_s_label], batch_size//2)  #shuffle is employed for dataset with default
 
             else:
                 source_train = data_s_im
@@ -164,11 +159,9 @@ def train_and_evaluate(graph, model, verbose=True):
                 source_label = np.r_[source_label, new_label]
 
                 gen_source_batch = batch_generator(
-                    [source_train, source_label], batch_size)
+                    [source_train, source_label], batch_size//2)
                 gen_new_batch = batch_generator(
                     [new_data, new_label], batch_size)
-                gen_source_only_batch = batch_generator(
-                    [data_s_im, data_s_label], batch_size)
 
             # Training loop
             for i in range(num_steps):
@@ -254,7 +247,7 @@ def train_and_evaluate(graph, model, verbose=True):
             if t != 0:
                 cand = data_t_im[perm, :]
                 canl = data_t_label[perm, :]
-                rate = min(max(int((t + 1) / 15.0 * preds_stack.shape[0]), 5000), 60000)
+                rate = min(max(int((t + 1) / P * preds_stack.shape[0]), 5000), 60000)
                 new_data, new_label, new_ind = judge_idda_func(cand,
                                                              preds_stack[:rate, :],
                                                              lower=lowerValue,
